@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Morpion 100x100</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Écran de menu principal -->
+        <div id="menu-screen" class="screen active">
+            <div class="menu-container">
+                <h1>Super Morpion</h1>
+                <h2>Plateau 100x100 - Alignez 5 pions</h2>
+                
+                <div class="difficulty-selection">
+                    <h3>Choisissez la difficulté de l'IA :</h3>
+                    <div class="difficulty-buttons">
+                        <button class="difficulty-btn" data-level="easy">
+                            <span class="level-name">Facile</span>
+                            <span class="level-desc">Coups aléatoires</span>
+                        </button>
+                        <button class="difficulty-btn" data-level="medium">
+                            <span class="level-name">Moyen</span>
+                            <span class="level-desc">Stratégie basique</span>
+                        </button>
+                        <button class="difficulty-btn" data-level="hard">
+                            <span class="level-name">Difficile</span>
+                            <span class="level-desc">Stratégie avancée</span>
+                        </button>
+                        <button class="difficulty-btn" data-level="elite">
+                            <span class="level-name">Elite</span>
+                            <span class="level-desc">IA optimisée</span>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="game-rules">
+                    <h4>Comment jouer :</h4>
+                    <ul>
+                        <li>• Plateau de 100x100 cases</li>
+                        <li>• Alignez 5 pions pour gagner</li>
+                        <li>• Maintenez clic droit et déplacez pour naviguer</li>
+                        <li>• Vous êtes les pions bleus (X)</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Écran de jeu -->
+        <div id="game-screen" class="screen">
+            <div class="game-header">
+                <div class="game-info">
+                    <span id="current-player">Tour du joueur</span>
+                    <span id="difficulty-display"></span>
+                </div>
+                <div class="game-controls">
+                    <button id="back-to-menu">Retour au menu</button>
+                    <button id="restart-game">Nouvelle partie</button>
+                </div>
+            </div>
+            
+            <div class="game-container">
+                <div id="game-viewport" class="viewport">
+                    <canvas id="game-canvas"></canvas>
+                </div>
+                
+                <div class="viewport-info">
+                    <div class="coordinates">
+                        Position: <span id="viewport-coords">50, 50</span>
+                    </div>
+                    <div class="instructions">
+                        Maintenez clic droit et déplacez pour naviguer
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Écran de fin de partie -->
+        <div id="game-over-screen" class="screen">
+            <div class="game-over-container">
+                <h2 id="game-result">Partie terminée</h2>
+                <div id="game-stats">
+                    <p>Coups joués: <span id="moves-count">0</span></p>
+                    <p>Temps de jeu: <span id="game-time">0:00</span></p>
+                </div>
+                <div class="game-over-buttons">
+                    <button id="copy-history">📋 Copier l'historique</button>
+                    <button id="play-again">Rejouer</button>
+                    <button id="change-difficulty">Changer difficulté</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="ai-base.js"></script>
+    <script src="ai-easy.js"></script>
+    <script src="ai-medium.js"></script>
+    <script src="ai-hard.js"></script>
+    <script src="ai-elite.js"></script>
+    <script src="game.js"></script>
+</body>
+</html>
