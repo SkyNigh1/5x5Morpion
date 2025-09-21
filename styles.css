@@ -240,6 +240,45 @@ body {
     opacity: 0.8;
 }
 
+/* Replay controls overlay */
+.replay-controls {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%);
+    display: none; /* toggled to flex in JS */
+    gap: 16px;
+    align-items: center;
+    z-index: 2000;
+}
+
+.replay-controls button {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    font-size: 28px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #1a202c;
+    background: rgba(255, 255, 255, 0.9);
+    box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+    transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.replay-controls button:hover {
+    transform: translateY(-2px) scale(1.05);
+    box-shadow: 0 12px 24px rgba(0,0,0,0.3);
+    background: rgba(255, 255, 255, 0.95);
+}
+
+.replay-controls button:active {
+    transform: translateY(0) scale(0.98);
+}
+
 /* Écran de fin de partie */
 #game-over-screen {
     justify-content: center;

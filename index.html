@@ -33,6 +33,10 @@
                             <span class="level-name">Elite</span>
                             <span class="level-desc">IA optimisée</span>
                         </button>
+                        <button class="difficulty-btn" data-level="legendary">
+                            <span class="level-name">Légendaire</span>
+                            <span class="level-desc">Règles tactiques expertes</span>
+                        </button>
                     </div>
                 </div>
                 
@@ -73,6 +77,10 @@
                     <div class="instructions">
                         Maintenez clic droit et déplacez pour naviguer
                     </div>
+                    <div id="replay-controls" class="replay-controls" style="display:none; gap:8px;">
+                        <button id="replay-prev" title="Coup précédent">◀</button>
+                        <button id="replay-next" title="Coup suivant">▶</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -87,6 +95,7 @@
                 </div>
                 <div class="game-over-buttons">
                     <button id="copy-history">📋 Copier l'historique</button>
+                    <button id="replay-game">🔁 Revoir la partie</button>
                     <button id="play-again">Rejouer</button>
                     <button id="change-difficulty">Changer difficulté</button>
                 </div>
@@ -94,11 +103,13 @@
         </div>
     </div>
 
+    <!-- Charger d'abord la classe de base, puis les IA, puis le jeu -->
     <script src="ai-base.js"></script>
     <script src="ai-easy.js"></script>
     <script src="ai-medium.js"></script>
     <script src="ai-hard.js"></script>
     <script src="ai-elite.js"></script>
+    <script src="ai-legendary.js"></script>
     <script src="game.js"></script>
 </body>
 </html>

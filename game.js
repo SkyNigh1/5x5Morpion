@@ -21,7 +21,8 @@ const DIFFICULTY_LEVELS = {
     easy: { name: 'Facile', searchDepth: 1 },
     medium: { name: 'Moyen', searchDepth: 2 },
     hard: { name: 'Difficile', searchDepth: 3 },
-    elite: { name: 'Elite', searchDepth: 4 }
+    elite: { name: 'Elite', searchDepth: 4 },
+    legendary: { name: 'Légendaire', searchDepth: 0 }
 };
 
 class SuperMorpionGame {
@@ -58,6 +59,10 @@ class SuperMorpionGame {
         this.initializeBoard();
         this.setupEventListeners();
         this.setupCanvas();
+
+        // État de replay
+        this.isReplaying = false;
+        this.replayIndex = 0; // index dans gameHistory (1..moveCount)
     }
     
     initializeBoard() {
@@ -104,6 +109,21 @@ class SuperMorpionGame {
         document.getElementById('copy-history').addEventListener('click', () => {
             this.copyGameHistory();
         });
+
+        // Replay controls
+        const replayPrev = document.getElementById('replay-prev');
+        const replayNext = document.getElementById('replay-next');
+        if (replayPrev && replayNext) {
+            replayPrev.addEventListener('click', () => this.stepReplay(-1));
+            replayNext.addEventListener('click', () => this.stepReplay(1));
+        }
+
+        const replayBtn = document.getElementById('replay-game');
+        if (replayBtn) {
+            replayBtn.addEventListener('click', () => {
+                this.startReplay();
+            });
+        }
     }
     
     setupCanvas() {
@@ -281,6 +301,9 @@ class SuperMorpionGame {
                 break;
             case 'elite':
                 ai = new AIElite(this.board, BOARD_SIZE, WIN_LENGTH, CELL_SIZE, PLAYERS);
+                break;
+            case 'legendary':
+                ai = new AILegendary(this.board, BOARD_SIZE, WIN_LENGTH, CELL_SIZE, PLAYERS);
                 break;
             default:
                 ai = new AIEasy(this.board, BOARD_SIZE, WIN_LENGTH, CELL_SIZE, PLAYERS);
@@ -673,6 +696,8 @@ class SuperMorpionGame {
         this.gameStartTime = Date.now();
         this.gameState = GAME_STATES.PLAYING;
         this.showScreen('game');
+        this.isReplaying = false;
+        this.toggleReplayControls(false);
         this.updateGameInfo();
         this.draw();
     }
@@ -698,6 +723,54 @@ class SuperMorpionGame {
         
         setTimeout(() => this.showScreen('gameOver'), 1000);
     }
+
+    // ===== Replay =====
+    startReplay() {
+        if (this.gameHistory.length === 0) return;
+        // Construire la position jusqu'au dernier coup et afficher sur le plateau
+        this.isReplaying = true;
+        this.replayIndex = this.gameHistory.length; // pointer après dernier coup
+        this.showScreen('game');
+        this.toggleReplayControls(true);
+        this.rebuildBoardUpTo(this.replayIndex);
+        // Centre le viewport sur le dernier coup
+        const last = this.gameHistory[this.gameHistory.length - 1];
+        this.centerViewportOn(last.x, last.y);
+        this.draw();
+    }
+
+    toggleReplayControls(show) {
+        const el = document.getElementById('replay-controls');
+        if (el) el.style.display = show ? 'flex' : 'none';
+    }
+
+    rebuildBoardUpTo(index) {
+        // Réinitialise le plateau et rejoue les 'index' premiers coups
+        this.board = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(0));
+        for (let i = 0; i < index; i++) {
+            const m = this.gameHistory[i];
+            this.board[m.y][m.x] = m.player;
+        }
+        this.moveCount = index;
+        // Le trait ne s'applique pas en replay, mais on peut afficher une info simple
+        this.currentPlayer = (index % 2 === 0) ? PLAYERS.HUMAN : PLAYERS.AI;
+    }
+
+    stepReplay(delta) {
+        if (!this.isReplaying) return;
+        const newIndex = Math.max(0, Math.min(this.gameHistory.length, this.replayIndex + delta));
+        if (newIndex === this.replayIndex) return;
+        this.replayIndex = newIndex;
+        this.rebuildBoardUpTo(this.replayIndex);
+        // Ne pas déplacer la vue à chaque step pour laisser l'utilisateur garder sa caméra
+        this.draw();
+    }
+
+    centerViewportOn(x, y) {
+        this.viewport.x = Math.max(0, Math.min(BOARD_SIZE - this.viewport.width, x - Math.floor(this.viewport.width / 2)));
+        this.viewport.y = Math.max(0, Math.min(BOARD_SIZE - this.viewport.height, y - Math.floor(this.viewport.height / 2)));
+        this.updateViewportDisplay();
+    }
     
     showScreen(screenName) {
         document.querySelectorAll('.screen').forEach(screen => {
@@ -722,75 +795,275 @@ class SuperMorpionGame {
         const gameTime = this.gameStats.gameTime;
         const minutes = Math.floor(gameTime / 60000);
         const seconds = Math.floor((gameTime % 60000) / 1000);
-        
-        let historyText = `🎮 SUPER MORPION - HISTORIQUE DE PARTIE\n`;
-        historyText += `═══════════════════════════════════════\n\n`;
-        
-        // Informations générales
-        historyText += `📊 INFORMATIONS GÉNÉRALES\n`;
-        historyText += `─────────────────────────\n`;
+
+        // Helpers locaux pour analyser des menaces sur un snapshot de plateau
+        const inBounds = (x, y) => x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE;
+        const dirs = [ [1,0], [0,1], [1,1], [1,-1] ];
+        const cloneBoard = (b) => b.map(row => [...row]);
+        const checkWinAt = (board, x, y, player) => {
+            for (const [dx, dy] of dirs) {
+                let count = 1;
+                for (let i = 1; i < WIN_LENGTH; i++) {
+                    const nx = x + i*dx, ny = y + i*dy;
+                    if (!inBounds(nx, ny) || board[ny][nx] !== player) break; count++;
+                }
+                for (let i = 1; i < WIN_LENGTH; i++) {
+                    const nx = x - i*dx, ny = y - i*dy;
+                    if (!inBounds(nx, ny) || board[ny][nx] !== player) break; count++;
+                }
+                if (count >= WIN_LENGTH) return true;
+            }
+            return false;
+        };
+        const extractPattern = (board, x, y, dx, dy, player) => {
+            let s = '';
+            for (let i = -4; i <= 4; i++) {
+                const nx = x + i*dx, ny = y + i*dy;
+                if (!inBounds(nx, ny)) s += 'W';
+                else if (board[ny][nx] === player) s += 'X';
+                else if (board[ny][nx] === 0) s += '_';
+                else s += 'O';
+            }
+            return s;
+        };
+        const countOpenThreeInPattern = (pattern) => {
+            const targets5 = ['_XXX_'];
+            const targets6 = ['_XX_X_', '_X_XX_'];
+            let c = 0;
+            for (let i = 0; i <= pattern.length - 5; i++) {
+                const sub5 = pattern.slice(i, i+5);
+                if (sub5.includes('O') || sub5.includes('W')) continue;
+                if (targets5.includes(sub5)) c++;
+            }
+            for (let i = 0; i <= pattern.length - 6; i++) {
+                const sub6 = pattern.slice(i, i+6);
+                if (sub6.includes('O') || sub6.includes('W')) continue;
+                if (targets6.includes(sub6)) c++;
+            }
+            return c;
+        };
+        const isOpenFourAt = (board, x, y, player) => {
+            for (const [dx, dy] of dirs) {
+                let cnt = 1; let lx = x, ly = y, rx = x, ry = y;
+                for (let i = 1; i < WIN_LENGTH; i++) {
+                    const nx = x + i*dx, ny = y + i*dy; if (!inBounds(nx, ny)) break;
+                    if (board[ny][nx] === player) { cnt++; rx = nx; ry = ny; } else break;
+                }
+                for (let i = 1; i < WIN_LENGTH; i++) {
+                    const nx = x - i*dx, ny = y - i*dy; if (!inBounds(nx, ny)) break;
+                    if (board[ny][nx] === player) { cnt++; lx = nx; ly = ny; } else break;
+                }
+                if (cnt === 4) {
+                    const bx = lx - dx, by = ly - dy; const ax = rx + dx, ay = ry + dy;
+                    const bEmpty = inBounds(bx, by) && board[by][bx] === 0;
+                    const aEmpty = inBounds(ax, ay) && board[ay][ax] === 0;
+                    if (bEmpty && aEmpty) return true;
+                }
+            }
+            return false;
+        };
+        const getBounds = (board, margin = 2) => {
+            let minX = BOARD_SIZE, minY = BOARD_SIZE, maxX = -1, maxY = -1;
+            for (let y = 0; y < BOARD_SIZE; y++) {
+                for (let x = 0; x < BOARD_SIZE; x++) {
+                    if (board[y][x] !== 0) {
+                        if (x < minX) minX = x; if (x > maxX) maxX = x;
+                        if (y < minY) minY = y; if (y > maxY) maxY = y;
+                    }
+                }
+            }
+            if (maxX < 0) return null;
+            return {
+                x0: Math.max(0, minX - margin), y0: Math.max(0, minY - margin),
+                x1: Math.min(BOARD_SIZE-1, maxX + margin), y1: Math.min(BOARD_SIZE-1, maxY + margin)
+            };
+        };
+        const enumerateThreatSquares = (board, player, checker, margin = 3) => {
+            const b = getBounds(board, margin); if (!b) return [];
+            const res = [];
+            for (let y = b.y0; y <= b.y1; y++) {
+                for (let x = b.x0; x <= b.x1; x++) {
+                    if (board[y][x] !== 0) continue;
+                    if (checker(board, x, y, player)) res.push({ x, y });
+                }
+            }
+            return res;
+        };
+        const createsOpenFourIfPlay = (board, x, y, player) => {
+            board[y][x] = player; const ok = isOpenFourAt(board, x, y, player); board[y][x] = 0; return ok;
+        };
+        const openFourSquares = (board, player, margin=3) => enumerateThreatSquares(board, player, (b,x,y,p)=>createsOpenFourIfPlay(b,x,y,p), margin);
+        const immediateWinSquares = (board, player, margin=3) => enumerateThreatSquares(board, player, (b,x,y,p)=>{ b[y][x]=p; const w=checkWinAt(b,x,y,p); b[y][x]=0; return w; }, margin);
+        const doubleThreeSquares = (board, player, margin=3) => {
+            const b = getBounds(board, margin); if (!b) return [];
+            const res = [];
+            for (let y = b.y0; y <= b.y1; y++) {
+                for (let x = b.x0; x <= b.x1; x++) {
+                    if (board[y][x] !== 0) continue;
+                    board[y][x] = player;
+                    let cnt = 0;
+                    for (const [dx, dy] of dirs) {
+                        const pat = extractPattern(board, x, y, dx, dy, player);
+                        cnt += countOpenThreeInPattern(pat);
+                    }
+                    board[y][x] = 0;
+                    if (cnt >= 2) res.push({ x, y });
+                }
+            }
+            return res;
+        };
+
+        // Collecte des diagnostics par balayage des snapshots sauvegardés
+        const diag = {
+            aiImmediateBlocks: 0,
+            aiImmediateBlocksAt: [],
+            missedImmediateBlocks: 0,
+            missedImmediateBlocksAt: [],
+            preventedOpenFour: 0,
+            preventedOpenFourAt: [],
+            humanOpenFourCreated: 0,
+            humanOpenFourAt: [],
+            preventedDoubleThree: 0,
+            preventedDoubleThreeAt: [],
+            aiAvgCenterDist: 0,
+            aiAvgNearestOwnDist: 0
+        };
+
+        let aiCenterDistSum = 0, aiOwnDistSum = 0, aiMoveCount = 0;
+        for (let i = 0; i < this.gameHistory.length; i++) {
+            const move = this.gameHistory[i];
+            const boardBefore = i > 0 ? cloneBoard(this.gameHistory[i-1].boardState) : cloneBoard(this.gameHistory[0].boardState);
+
+            if (move.player === PLAYERS.AI) {
+                // Stats de centre/proximité
+                const cx = BOARD_SIZE / 2, cy = BOARD_SIZE / 2;
+                aiCenterDistSum += Math.max(Math.abs(move.x - cx), Math.abs(move.y - cy));
+                // distance au plus proche pion IA avant le coup
+                let best = Infinity;
+                for (let y = 0; y < BOARD_SIZE; y++) {
+                    for (let x = 0; x < BOARD_SIZE; x++) {
+                        if (boardBefore[y][x] === PLAYERS.AI) {
+                            const d = Math.max(Math.abs(x - move.x), Math.abs(y - move.y));
+                            if (d < best) best = d;
+                        }
+                    }
+                }
+                if (best !== Infinity) aiOwnDistSum += best; else aiOwnDistSum += 0;
+                aiMoveCount++;
+
+                // Blocage immédiat ?
+                const humanWinSquares = immediateWinSquares(boardBefore, PLAYERS.HUMAN, 5);
+                if (humanWinSquares.find(s => s.x === move.x && s.y === move.y)) {
+                    diag.aiImmediateBlocks++;
+                    diag.aiImmediateBlocksAt.push(move.move);
+                }
+
+                // Prévention open four
+                const humanOpenFourNext = openFourSquares(boardBefore, PLAYERS.HUMAN, 5);
+                if (humanOpenFourNext.find(s => s.x === move.x && s.y === move.y)) {
+                    diag.preventedOpenFour++; diag.preventedOpenFourAt.push(move.move);
+                }
+
+                // Prévention double open three
+                const humanDoubleThreeNext = doubleThreeSquares(boardBefore, PLAYERS.HUMAN, 5);
+                if (humanDoubleThreeNext.find(s => s.x === move.x && s.y === move.y)) {
+                    diag.preventedDoubleThree++; diag.preventedDoubleThreeAt.push(move.move);
+                }
+            } else {
+                // Si humain vient de jouer gagnant et juste avant il y avait un winSquare non bloqué, compter comme miss
+                const winNow = checkWinAt(this.gameHistory[i].boardState, move.x, move.y, PLAYERS.HUMAN);
+                if (winNow && i > 0) {
+                    const before = cloneBoard(this.gameHistory[i-1].boardState);
+                    const humanWinSquares = immediateWinSquares(before, PLAYERS.HUMAN, 5);
+                    if (humanWinSquares.length > 0) {
+                        // Si le coup IA précédent n'a pas joué l'une de ces cases, considérer raté
+                        const prevAIMove = this.gameHistory[i-1];
+                        if (!(prevAIMove && prevAIMove.player === PLAYERS.AI && humanWinSquares.find(s => s.x === prevAIMove.x && s.y === prevAIMove.y))) {
+                            diag.missedImmediateBlocks++; diag.missedImmediateBlocksAt.push(i);
+                        }
+                    }
+                }
+
+                // Détection open-four effectivement créé par humain après son coup
+                const boardNow = cloneBoard(this.gameHistory[i].boardState);
+                if (isOpenFourAt(boardNow, move.x, move.y, PLAYERS.HUMAN)) {
+                    diag.humanOpenFourCreated++; diag.humanOpenFourAt.push(move.move);
+                }
+            }
+        }
+
+        if (aiMoveCount > 0) {
+            diag.aiAvgCenterDist = (aiCenterDistSum / aiMoveCount).toFixed(2);
+            diag.aiAvgNearestOwnDist = (aiOwnDistSum / aiMoveCount).toFixed(2);
+        }
+
+        // Texte de sortie enrichi pour amélioration du bot
+        let historyText = `🤖 SUPER MORPION - DIAGNOSTIC POUR AMÉLIORER L'IA\n`;
+        historyText += `════════════════════════════════════════════\n\n`;
+        historyText += `📊 Données de partie\n`;
+        historyText += `────────────────────\n`;
         historyText += `Date: ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}\n`;
-        historyText += `Niveau IA: ${difficulty.name} (Profondeur: ${difficulty.searchDepth})\n`;
-        historyText += `Gagnant: ${this.gameStats.winner === PLAYERS.HUMAN ? '🏆 Joueur' : '🤖 IA'}\n`;
-        historyText += `Durée de partie: ${minutes}:${seconds.toString().padStart(2, '0')}\n`;
-        historyText += `Total des coups: ${this.gameStats.totalMoves}\n`;
-        historyText += `Coups du joueur: ${this.gameStats.humanMoves}\n`;
-        historyText += `Coups de l'IA: ${this.gameStats.aiMoves}\n\n`;
-        
-        // Statistiques détaillées
-        historyText += `📈 STATISTIQUES DÉTAILLÉES\n`;
-        historyText += `─────────────────────────\n`;
+        historyText += `Niveau IA: ${difficulty.name} (Profondeur déclarée: ${difficulty.searchDepth})\n`;
+        historyText += `Résultat: ${this.gameStats.winner === PLAYERS.HUMAN ? '🏆 Joueur' : '🤖 IA'}\n`;
+        historyText += `Durée: ${minutes}:${seconds.toString().padStart(2, '0')} | Coups: ${this.gameStats.totalMoves} (Joueur ${this.gameStats.humanMoves} / IA ${this.gameStats.aiMoves})\n`;
         if (this.gameHistory.length > 0) {
             const avgTimePerMove = gameTime / this.gameHistory.length;
             historyText += `Temps moyen par coup: ${(avgTimePerMove / 1000).toFixed(2)}s\n`;
-            
-            const humanMoves = this.gameHistory.filter(move => move.player === PLAYERS.HUMAN);
-            const aiMoves = this.gameHistory.filter(move => move.player === PLAYERS.AI);
-            
-            if (humanMoves.length > 1) {
-                const avgHumanTime = humanMoves.slice(1).reduce((sum, move, index) => {
-                    return sum + (move.timeFromStart - humanMoves[index].timeFromStart);
-                }, 0) / (humanMoves.length - 1);
-                historyText += `Temps moyen joueur: ${(avgHumanTime / 1000).toFixed(2)}s\n`;
-            }
-            
-            if (aiMoves.length > 0) {
-                historyText += `Temps de réflexion IA: ~0.5s (constant)\n`;
-            }
         }
-        
-        // Répartition des coups par zones
+
         const zones = this.analyzeMovesDistribution();
-        historyText += `Répartition par zones:\n`;
-        historyText += `  Centre (40-60): ${zones.center} coups\n`;
-        historyText += `  Bords (0-20, 80-100): ${zones.edges} coups\n`;
-        historyText += `  Milieu (20-40, 60-80): ${zones.middle} coups\n\n`;
-        
-        // Historique détaillé des coups
-        historyText += `🎯 HISTORIQUE DÉTAILLÉ DES COUPS\n`;
-        historyText += `─────────────────────────────────\n`;
-        historyText += `N°  | Joueur | Position | Temps   | Cumul\n`;
-        historyText += `────┼────────┼──────────┼─────────┼───────\n`;
-        
-        this.gameHistory.forEach((move, index) => {
+        historyText += `Répartition: Centre(40-60)=${zones.center}, Milieu=${zones.middle}, Bords=${zones.edges}\n\n`;
+
+        historyText += `🛡️ Réactivité tactique IA\n`;
+        historyText += `───────────────────────\n`;
+        historyText += `Blocs immédiats effectués: ${diag.aiImmediateBlocks}` + (diag.aiImmediateBlocksAt.length? ` (aux coups: ${diag.aiImmediateBlocksAt.join(', ')})`:'') + `\n`;
+        historyText += `Blocs immédiats manqués: ${diag.missedImmediateBlocks}` + (diag.missedImmediateBlocksAt.length? ` (repères: ${diag.missedImmediateBlocksAt.join(', ')})`:'') + `\n`;
+        historyText += `Open-four adverses empêchés: ${diag.preventedOpenFour}` + (diag.preventedOpenFourAt.length? ` (aux coups: ${diag.preventedOpenFourAt.join(', ')})`:'') + `\n`;
+        historyText += `Open-four créés par l'adversaire: ${diag.humanOpenFourCreated}` + (diag.humanOpenFourAt.length? ` (aux coups: ${diag.humanOpenFourAt.join(', ')})`:'') + `\n`;
+        historyText += `Double "open three" adverses empêchés: ${diag.preventedDoubleThree}` + (diag.preventedDoubleThreeAt.length? ` (aux coups: ${diag.preventedDoubleThreeAt.join(', ')})`:'') + `\n\n`;
+
+        historyText += `📐 Profil de placement IA\n`;
+        historyText += `────────────────────────\n`;
+        historyText += `Distance moyenne au centre (Chebyshev): ${diag.aiAvgCenterDist}\n`;
+        historyText += `Distance moyenne au plus proche pion IA: ${diag.aiAvgNearestOwnDist}\n\n`;
+
+        // Historique synthétique
+        historyText += `🎯 Historique des coups\n`;
+        historyText += `──────────────────────\n`;
+        historyText += `N°  | Joueur | Pos | Temps | Cumul\n`;
+        historyText += `────┼────────┼─────┼───────┼──────\n`;
+        this.gameHistory.forEach((move) => {
             const playerIcon = move.player === PLAYERS.HUMAN ? '👤' : '🤖';
             const timeSeconds = (move.timeFromStart / 1000).toFixed(1);
             const position = `${move.x.toString().padStart(2, '0')},${move.y.toString().padStart(2, '0')}`;
-            
-            historyText += `${move.move.toString().padStart(3, ' ')} | ${playerIcon} ${move.playerName.padEnd(5, ' ')} | ${position.padEnd(8, ' ')} | ${timeSeconds.padStart(6, ' ')}s | ${timeSeconds.padStart(6, ' ')}s\n`;
+            historyText += `${move.move.toString().padStart(3, ' ')} | ${playerIcon} | ${position.padEnd(5, ' ')} | ${timeSeconds.padStart(5, ' ')}s | ${timeSeconds.padStart(5, ' ')}s\n`;
         });
-        
-        historyText += `\n`;
-        
-        // Analyse stratégique
-        historyText += `🧠 ANALYSE STRATÉGIQUE\n`;
-        historyText += `──────────────────────\n`;
-        const analysis = this.analyzeGameStrategy();
-        historyText += analysis;
-        
+
+        // Conseils ciblés selon diagnostics
+        historyText += `\n🧪 Pistes d'amélioration IA\n`;
+        historyText += `────────────────────────\n`;
+        if (diag.missedImmediateBlocks > 0) {
+            historyText += `• Renforcer la détection et priorité de blocage 1-coup (étendre marge de scan ou heuristique d'ordre des coups).\n`;
+        }
+        if (diag.humanOpenFourCreated > 0) {
+            historyText += `• Prévenir plus tôt les open-four (scans élargis, création de contre-menaces).\n`;
+        }
+        if (Number(diag.aiAvgNearestOwnDist) > 2.5) {
+            historyText += `• Améliorer la connectivité (placer plus près des groupes existants).\n`;
+        }
+        if (Number(diag.aiAvgCenterDist) > 18) {
+            historyText += `• Légère préférence centre à renforcer dans l'ouverture.\n`;
+        }
+        if (diag.preventedDoubleThree === 0) {
+            historyText += `• Détecter davantage les doubles "open three" dans les positions calmes.\n`;
+        }
+        if (diag.aiImmediateBlocks === 0 && this.gameStats.aiMoves > 0) {
+            historyText += `• Vérifier l'ordre des priorités (gagner/bloc immédiat) avant la recherche.\n`;
+        }
+
         historyText += `\n📋 Copié le ${new Date().toLocaleString('fr-FR')}\n`;
         historyText += `🔗 Super Morpion 100x100 - Alignez 5 pions\n`;
-        
+
         return historyText;
     }
     
