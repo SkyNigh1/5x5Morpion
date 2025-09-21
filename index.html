@@ -37,6 +37,10 @@
                             <span class="level-name">Légendaire</span>
                             <span class="level-desc">Règles tactiques expertes</span>
                         </button>
+                        <button class="difficulty-btn" data-level="training">
+                            <span class="level-name">Entraînement</span>
+                            <span class="level-desc">Deux IA + apprentissage</span>
+                        </button>
                     </div>
                 </div>
                 
@@ -85,6 +89,26 @@
             </div>
         </div>
 
+        <!-- Écran d'entraînement IA vs IA -->
+        <div id="training-screen" class="screen">
+            <div class="game-header">
+                <div class="game-info">
+                    <span>Mode entraînement: IA vs IA</span>
+                    <span id="training-stats"></span>
+                </div>
+                <div class="game-controls">
+                    <button id="training-back">Retour</button>
+                    <button id="training-toggle">Pause</button>
+                    <button id="training-human-takeover">Jouer à la place de l'IA</button>
+                </div>
+            </div>
+            <div class="game-container">
+                <div id="training-viewport" class="viewport">
+                    <canvas id="training-canvas"></canvas>
+                </div>
+            </div>
+        </div>
+
         <!-- Écran de fin de partie -->
         <div id="game-over-screen" class="screen">
             <div class="game-over-container">
@@ -110,6 +134,7 @@
     <script src="ai-hard.js"></script>
     <script src="ai-elite.js"></script>
     <script src="ai-legendary.js"></script>
+    <script src="experience.js"></script>
     <script src="game.js"></script>
 </body>
 </html>

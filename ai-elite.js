@@ -533,11 +533,14 @@ class AIElite extends AIBase {
         }
 
         // Tri par score heuristique rapide (attaque + défense)
-        const scored = moves.map(m => ({
-            ...m,
-            s: this.quickScore(m.x, m.y, player)
-        }));
-    scored.sort((a, b) => b.s - a.s);
+        const scored = moves.map(m => {
+            let s = this.quickScore(m.x, m.y, player);
+            // Déterminisme pour départager les égalités sans biais directionnel constant
+            const h = (((m.x * 73856093) ^ (m.y * 19349663) ^ (this.currentHash | 0)) >>> 0) % 997;
+            s += h * 1e-6; // ajout très léger, ne change pas l'ordre sauf égalité stricte
+            return { ...m, s };
+        });
+        scored.sort((a, b) => b.s - a.s);
 
         // Limiter pour performance
         return scored.slice(0, 28).map(s => ({ x: s.x, y: s.y }));
@@ -564,6 +567,8 @@ class AIElite extends AIBase {
         const cy = this.BOARD_SIZE / 2;
         const centerDist = Math.max(Math.abs(x - cx), Math.abs(y - cy));
         score += Math.max(0, 20 - centerDist);
+        // Petit biais d'expérience appris
+        score += this.getExperienceBias(x, y, player) * 0.25;
         return score;
     }
 

@@ -19,69 +19,92 @@ class AILegendary extends AIBase {
         super(board, boardSize, winLength, cellSize, players);
     }
 
+    // Entrée principale avec analyse, modes adaptatifs, et priorités hiérarchiques
     getMove() {
         const AI = this.PLAYERS.AI;
         const H = this.PLAYERS.HUMAN;
 
-        // 1) Gagner immédiatement
-        const winNow = this.findImmediateWinFull(AI, 4);
+        // Analyse préliminaire et mode adaptatif
+        const analysis = this.preAnalyze();
+        const mode = this.chooseMode(analysis);
+
+        // === NIVEAU CRITIQUE ===
+        // 1. Gagner immédiatement
+        const winNow = this.findImmediateWinFull(AI, 5);
         if (winNow) return winNow;
 
-        // 2) Bloquer victoire immédiate humaine
-        const blockNow = this.findImmediateWinFull(H, 4);
+        // 2. Bloquer défaite immédiate
+        const blockNow = this.findImmediateWinFull(H, 5);
         if (blockNow) return blockNow;
 
-        // 3) Double-menace forcée : si l'humain, en un coup, peut créer 2 menaces de victoire simultanées
-        const blockDualImmediate = this.blockOpponentCreatesDualImmediate(H, 5);
+        // 3. Double-menace forcée (1-2 coups) de l'adversaire
+        const blockDualImmediate = this.blockOpponentCreatesDualImmediate(H, 6);
         if (blockDualImmediate) return blockDualImmediate;
-        const blockDualFour = this.findOpponentCreatesDualFourThreat(H, 5);
+        const blockDualFour = this.findOpponentCreatesDualFourThreat(H, 6);
         if (blockDualFour) return blockDualFour;
+        const preempt2Ply = this.preemptTwoPlyDualThreat(H, 6);
+        if (preempt2Ply) return preempt2Ply;
 
-        // 3) Humain a open-four ?
-        const humanOpenFour = this.findAnyOpenFour(H, 5);
-        if (humanOpenFour) {
-            // Essayer de gagner maintenant (déjà testé), sinon créer une victoire forcée
-            const createOurOpenFour = this.findCreateOpenFour(AI, 5);
+        // === NIVEAU STRATÉGIQUE ===
+        // 4. Gestion de l'accumulation → mode forcing si ratio défavorable
+        const opponentOpenFour = this.findAnyOpenFour(H, 6);
+        if (opponentOpenFour) {
+            // Essayer de gagner, sinon créer une victoire forcée / double immédiate
+            const createOurOpenFour = this.findCreateOpenFour(AI, 6) || this.extendFromOpenThreeToOpenFour(AI, 6);
             if (createOurOpenFour) return createOurOpenFour;
-            const createDualImmediate = this.findCreateDualImmediate(AI, 5);
+            const createDualImmediate = this.findCreateDualImmediate(AI, 6);
             if (createDualImmediate) return createDualImmediate;
-            // Sinon, maximiser OOO
-            return this.findMaximizeOOO(AI);
         }
 
-        // 4) IA a open-three (XXX avec deux bouts libres) ET humain n'a pas de win 1-coup
-        const humanWinSquares = this.listAllImmediateWins(H, 4);
+        if (mode === 'forcing' || mode === 'aggressive') {
+            // Mode forcing/agressif: privilégie la création de menaces fortes
+            const force1 = this.findCreateOpenFour(AI, 6);
+            if (force1) return force1;
+            const force2 = this.findCreateDualImmediate(AI, 6);
+            if (force2) return force2;
+        }
+
+        // 5. Contrôle des intersections critiques
+        const blockCombined = this.blockCombinedThreats(H, 6);
+        if (blockCombined) return blockCombined;
+        const safeIntersection = this.minimizeCriticalIntersections(AI, H, 6);
+        if (safeIntersection) return safeIntersection;
+
+        // 6. Surcharge imminente: créer contre-menace pour sortir de la zone rouge
+        if (analysis.overloadRisk) {
+            const counter1 = this.findCreateOpenFour(AI, 6) || this.extendFromOpenThreeToOpenFour(AI, 6);
+            if (counter1) return counter1;
+            const counter2 = this.findCreateDualImmediate(AI, 6);
+            if (counter2) return counter2;
+        }
+
+        // === NIVEAU TACTIQUE ===
+        // 7. IA a open-three et pas de menace 1-coup adverse → étendre
+        const humanWinSquares = this.listAllImmediateWins(H, 5);
         if (humanWinSquares.length === 0) {
-            const extendToOpenFour = this.extendFromOpenThreeToOpenFour(AI, 5);
+            const extendToOpenFour = this.extendFromOpenThreeToOpenFour(AI, 6);
             if (extendToOpenFour) return extendToOpenFour;
         }
 
-        // 6) Menaces combinées (intersections de 3+ multiples) à prévenir
-        const blockCombined = this.blockCombinedThreats(H, 5);
-        if (blockCombined) return blockCombined;
-
-        // 5) Humain a open-three: bloquer un bout sauf si IA peut gagner ou créer open-four
-        const createOurOpenFour2 = this.findCreateOpenFour(AI, 5);
+        // 8. Adversaire a open-three/four: bloquer si pas de forcing disponible
+        const createOurOpenFour2 = this.findCreateOpenFour(AI, 6);
         const humanOpenThreeBlock = this.blockHumanOpenThreeOrPreferWin(H, createOurOpenFour2);
         if (humanOpenThreeBlock) return humanOpenThreeBlock;
-
-        // 6) Humain a quatre avec un seul bout libre -> bloquer (sauf gain immédiat déjà couvert)
-        const blockSemiFour = this.blockHumanSemiFour(H, 5);
+        const blockSemiFour = this.blockHumanSemiFour(H, 6);
         if (blockSemiFour) return blockSemiFour;
 
-        // 7) Motif humain XX_X (et variante _XX_X_) -> jouer au centre pour XXOX / _XXOX_
+        // 11. Motifs spécifiques
         const playPatternGap = this.playOnPatternXX_X(H) || this.playOnPatternGap(H, '_XX_X_');
         if (playPatternGap) return playPatternGap;
 
-        // 8) Empêcher création double open-three en un coup
-        const blockDoubleThree = this.blockHumanCreatesDoubleThree(H, 5);
+        // === NIVEAU POSITIONNEL ===
+        // 12. Empêcher double-open-three en un coup
+        const blockDoubleThree = this.blockHumanCreatesDoubleThree(H, 6);
         if (blockDoubleThree) return blockDoubleThree;
 
-        // 11) Contrôle intersections critiques: choisir un coup qui minimise la capacité adverse à créer intersections de 3+
-        const safeIntersection = this.minimizeCriticalIntersections(AI, H, 5);
-        if (safeIntersection) return safeIntersection;
-
-        // 12) Sinon: maximiser _OOO_
+        // 13-14. Max _OOO_ + contrôle centre / anticipation légère
+        const lookaheadBest = this.lookaheadSteer(AI, H, mode);
+        if (lookaheadBest) return lookaheadBest;
         return this.findMaximizeOOO(AI);
     }
 
@@ -660,9 +683,110 @@ class AILegendary extends AIBase {
             }
             this.board[m.y][m.x] = 0;
             sc += this.calculateProximityBonus(m.x, m.y);
+            // Biais d'expérience
+            sc += this.getExperienceBias(m.x, m.y, player) * 0.25;
             if (sc > bestScore) { bestScore = sc; best = m; }
         }
         // Fallback centre
         return best || { x: Math.floor(this.BOARD_SIZE/2), y: Math.floor(this.BOARD_SIZE/2) };
+    }
+    // ==== Extensions stratégiques et d'anticipation ====
+    // Analyse préliminaire du plateau
+    preAnalyze() {
+        const AI = this.PLAYERS.AI, H = this.PLAYERS.HUMAN;
+        const bounds = this.getBoardBounds(6) || { x0: 0, y0: 0, x1: this.BOARD_SIZE-1, y1: this.BOARD_SIZE-1 };
+        let aiLines3 = 0, hLines3 = 0;
+        let aiCombMax = 0, hCombMax = 0;
+        for (let y = bounds.y0; y <= bounds.y1; y++) {
+            for (let x = bounds.x0; x <= bounds.x1; x++) {
+                if (this.board[y][x] === 0) {
+                    this.board[y][x] = AI; aiCombMax = Math.max(aiCombMax, this.combinedThreatScoreAt(x, y, AI)); this.board[y][x] = 0;
+                    this.board[y][x] = H;  hCombMax  = Math.max(hCombMax,  this.combinedThreatScoreAt(x, y, H));  this.board[y][x] = 0;
+                }
+            }
+        }
+        // Approximations des lignes 3+: compter directions avec motifs open-three sur nos pierres actuelles
+        for (let y = bounds.y0; y <= bounds.y1; y++) {
+            for (let x = bounds.x0; x <= bounds.x1; x++) {
+                if (this.board[y][x] === AI) aiLines3 += this.countOpenThreeDirectionsAt(x, y, AI);
+                else if (this.board[y][x] === H) hLines3 += this.countOpenThreeDirectionsAt(x, y, H);
+            }
+        }
+        // Surcharge imminente si adversaire a beaucoup de cases créant 3+ combiné
+        let overloadRisk = false; let risky = 0;
+        for (let y = bounds.y0; y <= bounds.y1; y++) {
+            for (let x = bounds.x0; x <= bounds.x1; x++) {
+                if (this.board[y][x] !== 0) continue;
+                this.board[y][x] = H; const sc = this.combinedThreatScoreAt(x, y, H); this.board[y][x] = 0;
+                if (sc >= 3) risky++;
+            }
+        }
+        overloadRisk = risky >= 3;
+        return { aiLines3, hLines3, aiCombMax, hCombMax, overloadRisk };
+    }
+
+    chooseMode(analysis) {
+        const diff = analysis.hLines3 - analysis.aiLines3;
+        if (diff >= 2 || analysis.hCombMax >= 4) return 'forcing';
+        if (diff >= 1 || analysis.overloadRisk) return 'aggressive';
+        return 'normal';
+    }
+
+    // Préemption: si en 2 plis l'adversaire peut atteindre un double-menace significatif, occuper la case-clé
+    preemptTwoPlyDualThreat(H, margin = 6) {
+        const b = this.getBoardBounds(margin);
+        if (!b) return null;
+        let best = null; let bestScore = 4; // seuil combiné
+        for (let y = b.y0; y <= b.y1; y++) {
+            for (let x = b.x0; x <= b.x1; x++) {
+                if (this.board[y][x] !== 0) continue;
+                // Simule: si H joue ici, potentiel combiné élevé => préempter
+                this.board[y][x] = H; const sc = this.combinedThreatScoreAt(x, y, H); this.board[y][x] = 0;
+                if (sc > bestScore) { bestScore = sc; best = { x, y }; }
+            }
+        }
+        return best;
+    }
+
+    // Anticipation légère: pour quelques coups candidats, choisir celui qui minimise le pire cas adverse immédiat
+    lookaheadSteer(AI, H, mode) {
+        const candidates = this.getPossibleMoves(16);
+        if (candidates.length === 0) return null;
+        let best = null; let bestWorst = Infinity; let bestTie = -Infinity;
+        for (const m of candidates) {
+            this.board[m.y][m.x] = AI;
+            // Mesure du pire cas au prochain coup adverse
+            const worst = this.evalOpponentNextWorst(H);
+            // Tie-break: favoriser notre combiné + expérience + proximité
+            let tie = this.combinedThreatScoreAt(m.x, m.y, AI);
+            tie += this.getExperienceBias(m.x, m.y, AI) * 0.3;
+            tie += Math.max(0, 10 - this.distanceFromCenter(m.x, m.y));
+            this.board[m.y][m.x] = 0;
+            if (worst < bestWorst || (worst === bestWorst && tie > bestTie)) {
+                bestWorst = worst; bestTie = tie; best = { x: m.x, y: m.y };
+            }
+        }
+        // Utiliser ce guidage surtout en mode agressif/normal; en forcing, menaces déjà préférées plus haut
+        return (mode !== 'forcing') ? best : null;
+    }
+
+    evalOpponentNextWorst(H) {
+        const b = this.getBoardBounds(4) || { x0: 0, y0: 0, x1: this.BOARD_SIZE-1, y1: this.BOARD_SIZE-1 };
+        let worst = 0;
+        for (let y = b.y0; y <= b.y1; y++) {
+            for (let x = b.x0; x <= b.x1; x++) {
+                if (this.board[y][x] !== 0) continue;
+                this.board[y][x] = H;
+                // Score de danger: victoires immédiates + open-four + combiné
+                let danger = 0;
+                if (this.isWinAt(x, y, H)) danger += 10;
+                if (this.isOpenFourAt(x, y, H)) danger += 6;
+                danger += this.combinedThreatScoreAt(x, y, H);
+                this.board[y][x] = 0;
+                if (danger > worst) worst = danger;
+                if (worst >= 12) return worst; // coupure
+            }
+        }
+        return worst;
     }
 }

@@ -57,12 +57,31 @@ class AIBase {
                 }
             }
         }
-        
-        // Convertit en tableau et limite le nombre de mouvements
-        return Array.from(nearbyMoves).map(pos => {
+
+        // Convertit en tableau avec features et trie pour éviter un biais directionnel
+        const cx = this.BOARD_SIZE / 2;
+        const cy = this.BOARD_SIZE / 2;
+        const arr = Array.from(nearbyMoves).map(pos => {
             const [x, y] = pos.split(',').map(Number);
-            return { x, y };
-        }).slice(0, maxMoves);
+            // Score d'adjacence: pierres à portée 1 (poids 2) et portée 2 (poids 1)
+            let adj = 0;
+            for (let dy = -2; dy <= 2; dy++) {
+                for (let dx = -2; dx <= 2; dx++) {
+                    if (dx === 0 && dy === 0) continue;
+                    const nx = x + dx, ny = y + dy;
+                    if (nx < 0 || ny < 0 || nx >= this.BOARD_SIZE || ny >= this.BOARD_SIZE) continue;
+                    if (this.board[ny][nx] !== 0) {
+                        const d = Math.max(Math.abs(dx), Math.abs(dy));
+                        adj += (d === 1 ? 2 : 1);
+                    }
+                }
+            }
+            const centerDist = Math.max(Math.abs(x - cx), Math.abs(y - cy));
+            return { x, y, adj, centerDist };
+        });
+        // Tri: plus d'adjacence d'abord, puis plus proche du centre
+        arr.sort((a, b) => (b.adj - a.adj) || (a.centerDist - b.centerDist));
+        return arr.slice(0, maxMoves).map(({x,y}) => ({ x, y }));
     }
     
     /**
@@ -283,5 +302,18 @@ class AIBase {
         const centerX = this.BOARD_SIZE / 2;
         const centerY = this.BOARD_SIZE / 2;
         return Math.sqrt(Math.pow(x - centerX, 2) + Math.pow(y - centerY, 2));
+    }
+
+    /**
+     * Renvoie un petit biais d'expérience pour le coup (x,y) si l'expérience est disponible
+     * Utilisé pour influencer l'ordre des coups et certains tie-breakers.
+     */
+    getExperienceBias(x, y, player) {
+        try {
+            if (typeof window !== 'undefined' && window.SuperMorpionExperience) {
+                return window.SuperMorpionExperience.biasForMove(this.board, x, y, player, this.BOARD_SIZE) || 0;
+            }
+        } catch (_) {}
+        return 0;
     }
 }

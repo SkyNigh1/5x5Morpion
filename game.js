@@ -22,7 +22,8 @@ const DIFFICULTY_LEVELS = {
     medium: { name: 'Moyen', searchDepth: 2 },
     hard: { name: 'Difficile', searchDepth: 3 },
     elite: { name: 'Elite', searchDepth: 4 },
-    legendary: { name: 'Légendaire', searchDepth: 0 }
+    legendary: { name: 'Légendaire', searchDepth: 0 },
+    training: { name: 'Entraînement', searchDepth: 0 }
 };
 
 class SuperMorpionGame {
@@ -85,7 +86,11 @@ class SuperMorpionGame {
         document.querySelectorAll('.difficulty-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 this.difficulty = e.currentTarget.dataset.level;
-                this.startGame();
+                if (this.difficulty === 'training') {
+                    this.startTraining();
+                } else {
+                    this.startGame();
+                }
             });
         });
         
@@ -721,6 +726,14 @@ class SuperMorpionGame {
         const seconds = gameTime % 60;
         document.getElementById('game-time').textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
         
+        // Mettre à jour l'expérience avec l'historique de la partie
+        try {
+            if (window.SuperMorpionExperience) {
+                const compactHistory = this.gameHistory.map(m => ({ x: m.x, y: m.y, player: m.player }));
+                window.SuperMorpionExperience.updateFromGame(compactHistory, winner, BOARD_SIZE);
+            }
+        } catch (_) {}
+
         setTimeout(() => this.showScreen('gameOver'), 1000);
     }
 
@@ -780,7 +793,8 @@ class SuperMorpionGame {
         const screenMap = {
             'menu': 'menu-screen',
             'game': 'game-screen',
-            'gameOver': 'game-over-screen'
+            'gameOver': 'game-over-screen',
+            'training': 'training-screen'
         };
         
         document.getElementById(screenMap[screenName]).classList.add('active');
@@ -788,6 +802,174 @@ class SuperMorpionGame {
         if (screenName === 'game') {
             setTimeout(() => this.resizeCanvas(), 100);
         }
+        if (screenName === 'training' && this.trainingCanvas) {
+            setTimeout(() => this.resizeTrainingCanvas(), 100);
+        }
+    }
+
+    // ===== Mode Entraînement (IA vs IA) =====
+    startTraining() {
+        // Prépare un plateau séparé, canvas distinct, et boucle d'auto-jeu
+        this.training = {
+            running: true,
+            paused: false,
+            currentPlayer: PLAYERS.HUMAN,
+            board: Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(0)),
+            history: [],
+            stats: { games: 0, ai1Wins: 0, ai2Wins: 0, draws: 0 },
+            speedMs: 50,
+            takeover: false // si l'humain prend la main
+        };
+
+        // Canvas d'entraînement
+        this.trainingCanvas = document.getElementById('training-canvas');
+        this.trainingCtx = this.trainingCanvas.getContext('2d');
+        this.trainingViewport = { x: 40, y: 40, width: 20, height: 20 };
+        this.setupTrainingInteractions();
+        this.showScreen('training');
+        this.resizeTrainingCanvas();
+        this.updateTrainingStats();
+        this.scheduleNextTrainingTick();
+
+        // Boutons contrôle
+        const back = document.getElementById('training-back');
+        const toggle = document.getElementById('training-toggle');
+        const takeover = document.getElementById('training-human-takeover');
+        if (back) back.onclick = () => { this.training.running = false; this.showScreen('menu'); };
+    if (toggle) toggle.onclick = () => { this.training.paused = !this.training.paused; toggle.textContent = this.training.paused ? 'Reprendre' : 'Pause'; if (!this.training.paused) this.scheduleNextTrainingTick(); };
+    if (takeover) takeover.onclick = () => { this.training.takeover = !this.training.takeover; takeover.textContent = this.training.takeover ? 'Laisser l\'IA reprendre' : 'Jouer à la place de l\'IA'; if (!this.training.takeover) this.scheduleNextTrainingTick(); };
+    }
+
+    setupTrainingInteractions() {
+        const vp = document.getElementById('training-viewport');
+        if (!this.trainingCanvas || !vp) return;
+        this.trainingCanvas.onmousedown = (e) => {
+            if (!this.training.takeover) return;
+            const rect = this.trainingCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            const bx = Math.floor(this.trainingViewport.x + x / CELL_SIZE);
+            const by = Math.floor(this.trainingViewport.y + y / CELL_SIZE);
+            if (bx>=0 && by>=0 && bx<BOARD_SIZE && by<BOARD_SIZE && this.training.board[by][bx]===0) {
+                const player = this.training.currentPlayer;
+                this.training.board[by][bx] = player;
+                this.training.history.push({ x: bx, y: by, player });
+                const win = this.trainingCheckWinner(bx, by);
+                if (win) {
+                    this.training.stats.games++;
+                    if (win === PLAYERS.AI) this.training.stats.ai2Wins++; else this.training.stats.ai1Wins++;
+                    if (window.SuperMorpionExperience) window.SuperMorpionExperience.updateFromGame(this.training.history, win, BOARD_SIZE);
+                    this.resetTrainingBoard();
+                } else {
+                    this.training.currentPlayer = (player === PLAYERS.HUMAN) ? PLAYERS.AI : PLAYERS.HUMAN;
+                }
+                this.drawTraining();
+            }
+        };
+        // Drag pour déplacer la vue
+        let dragging=false, last={x:0,y:0};
+        this.trainingCanvas.addEventListener('mousedown', e=>{ dragging=true; const r=this.trainingCanvas.getBoundingClientRect(); last={x:e.clientX-r.left,y:e.clientY-r.top}; vp.classList.add('dragging'); });
+        this.trainingCanvas.addEventListener('mousemove', e=>{ if(!dragging) return; const r=this.trainingCanvas.getBoundingClientRect(); const cur={x:e.clientX-r.left,y:e.clientY-r.top}; const dx=(cur.x-last.x)/CELL_SIZE; const dy=(cur.y-last.y)/CELL_SIZE; this.trainingViewport.x=Math.max(0,Math.min(BOARD_SIZE-this.trainingViewport.width,this.trainingViewport.x-dx)); this.trainingViewport.y=Math.max(0,Math.min(BOARD_SIZE-this.trainingViewport.height,this.trainingViewport.y-dy)); last=cur; this.drawTraining(); });
+        this.trainingCanvas.addEventListener('mouseup', ()=>{ dragging=false; vp.classList.remove('dragging'); });
+        this.trainingCanvas.addEventListener('mouseleave', ()=>{ dragging=false; vp.classList.remove('dragging'); });
+        window.addEventListener('resize', ()=> this.resizeTrainingCanvas());
+    }
+
+    resizeTrainingCanvas() {
+        const viewport = document.getElementById('training-viewport');
+        if (!viewport || !this.trainingCanvas) return;
+        this.trainingCanvas.width = viewport.clientWidth;
+        this.trainingCanvas.height = viewport.clientHeight;
+        this.trainingViewport.width = Math.floor(this.trainingCanvas.width / CELL_SIZE);
+        this.trainingViewport.height = Math.floor(this.trainingCanvas.height / CELL_SIZE);
+        this.trainingViewport.width = Math.min(this.trainingViewport.width, BOARD_SIZE);
+        this.trainingViewport.height = Math.min(this.trainingViewport.height, BOARD_SIZE);
+        this.drawTraining();
+    }
+
+    drawTraining() {
+        const ctx = this.trainingCtx; if (!ctx) return;
+        ctx.clearRect(0,0,this.trainingCanvas.width,this.trainingCanvas.height);
+        // Grille
+        ctx.strokeStyle = '#4a5568'; ctx.lineWidth=1;
+        const startX=Math.floor(this.trainingViewport.x), startY=Math.floor(this.trainingViewport.y);
+        const endX=Math.min(BOARD_SIZE, startX+this.trainingViewport.width+2);
+        const endY=Math.min(BOARD_SIZE, startY+this.trainingViewport.height+2);
+        for(let x=startX;x<=endX;x++){ const cx=(x-this.trainingViewport.x)*CELL_SIZE; ctx.beginPath(); ctx.moveTo(cx,0); ctx.lineTo(cx,this.trainingCanvas.height); ctx.stroke(); }
+        for(let y=startY;y<=endY;y++){ const cy=(y-this.trainingViewport.y)*CELL_SIZE; ctx.beginPath(); ctx.moveTo(0,cy); ctx.lineTo(this.trainingCanvas.width,cy); ctx.stroke(); }
+        // Pions
+        for(let y=startY;y<Math.min(BOARD_SIZE,startY+this.trainingViewport.height+1);y++){
+            for(let x=startX;x<Math.min(BOARD_SIZE,startX+this.trainingViewport.width+1);x++){
+                const piece=this.training.board[y][x]; if(!piece) continue;
+                const px=(x-this.trainingViewport.x)*CELL_SIZE+CELL_SIZE/2;
+                const py=(y-this.trainingViewport.y)*CELL_SIZE+CELL_SIZE/2;
+                if (piece===PLAYERS.HUMAN){ ctx.strokeStyle='#3182ce'; ctx.lineWidth=3; const s=CELL_SIZE*0.3; ctx.beginPath(); ctx.moveTo(px-s,py-s); ctx.lineTo(px+s,py+s); ctx.moveTo(px+s,py-s); ctx.lineTo(px-s,py+s); ctx.stroke(); }
+                else { ctx.strokeStyle='#e53e3e'; ctx.lineWidth=3; const r=CELL_SIZE*0.3; ctx.beginPath(); ctx.arc(px,py,r,0,Math.PI*2); ctx.stroke(); }
+            }
+        }
+    }
+
+    scheduleNextTrainingTick() {
+        if (!this.training || !this.training.running) return;
+        if (this.training.paused || this.training.takeover) return;
+        setTimeout(()=> this.trainingTick(), this.training.speedMs);
+    }
+
+    trainingTick() {
+        if (!this.training || !this.training.running || this.training.paused || this.training.takeover) return;
+        // Sélection de coup pour le joueur courant
+        const player = this.training.currentPlayer;
+        // Remap 'AI'/'HUMAN' ids so the engine always plays for the current 'player'
+        const mappedPlayers = (player === PLAYERS.AI)
+            ? PLAYERS
+            : { AI: PLAYERS.HUMAN, HUMAN: PLAYERS.AI };
+        const ai = (player === PLAYERS.AI)
+            ? new AIElite(this.training.board, BOARD_SIZE, WIN_LENGTH, CELL_SIZE, mappedPlayers)
+            : new AILegendary(this.training.board, BOARD_SIZE, WIN_LENGTH, CELL_SIZE, mappedPlayers);
+        const move = ai.getMove();
+        if (move) {
+            this.training.board[move.y][move.x] = player;
+            this.training.history.push({ x: move.x, y: move.y, player });
+            const win = this.trainingCheckWinner(move.x, move.y);
+            if (win) {
+                // Finaliser partie
+                this.training.stats.games++;
+                if (win === PLAYERS.AI) this.training.stats.ai2Wins++; else this.training.stats.ai1Wins++;
+                if (window.SuperMorpionExperience) window.SuperMorpionExperience.updateFromGame(this.training.history, win, BOARD_SIZE);
+                this.resetTrainingBoard();
+            } else {
+                this.training.currentPlayer = (player === PLAYERS.HUMAN) ? PLAYERS.AI : PLAYERS.HUMAN;
+            }
+            this.drawTraining();
+            this.updateTrainingStats();
+        }
+        this.scheduleNextTrainingTick();
+    }
+
+    trainingCheckWinner(x, y) {
+        const player = this.training.board[y][x];
+        if (!player) return null;
+        const dirs=[[1,0],[0,1],[1,1],[1,-1]];
+        for (const [dx,dy] of dirs){
+            let c=1; for(let i=1;i<WIN_LENGTH;i++){ const nx=x+i*dx, ny=y+i*dy; if(nx<0||ny<0||nx>=BOARD_SIZE||ny>=BOARD_SIZE) break; if(this.training.board[ny][nx]===player)c++; else break; }
+            for(let i=1;i<WIN_LENGTH;i++){ const nx=x-i*dx, ny=y-i*dy; if(nx<0||ny<0||nx>=BOARD_SIZE||ny>=BOARD_SIZE) break; if(this.training.board[ny][nx]===player)c++; else break; }
+            if (c>=WIN_LENGTH) return player;
+        }
+        return null;
+    }
+
+    resetTrainingBoard() {
+        this.training.board = Array(BOARD_SIZE).fill(null).map(()=>Array(BOARD_SIZE).fill(0));
+        this.training.history = [];
+        this.training.currentPlayer = PLAYERS.HUMAN;
+        this.updateTrainingStats();
+    }
+
+    updateTrainingStats() {
+        const el = document.getElementById('training-stats');
+        if (!el || !this.training) return;
+        const { games, ai1Wins, ai2Wins, draws } = this.training.stats;
+        el.textContent = `Parties: ${games} | IA1 (X): ${ai1Wins} | IA2 (O): ${ai2Wins}` + (draws?` | Nuls: ${draws}`:'');
     }
     
     generateGameHistoryText() {
