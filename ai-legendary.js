@@ -37,6 +37,15 @@ class AILegendary extends AIBase {
         const blockNow = this.findImmediateWinFull(H, 5);
         if (blockNow) return blockNow;
 
+        // 2b. Forcer une victoire en deux: si l'IA possède un open-three (XXX avec deux extrémités vides)
+        // et que l'humain n'a PAS de victoire en un coup, alors jouer tout de suite pour étendre à un open-four.
+        // Cela force l'adversaire à boucher un côté et on gagnera ensuite sur l'autre.
+        const humanImmediateThreats = this.listAllImmediateWins(H, 5);
+        if (humanImmediateThreats.length === 0) {
+            const extendDirect = this.extendAnyOpenThreeToFour(AI, 6);
+            if (extendDirect) return extendDirect;
+        }
+
         // 3. Double-menace forcée (1-2 coups) de l'adversaire
         const blockDualImmediate = this.blockOpponentCreatesDualImmediate(H, 6);
         if (blockDualImmediate) return blockDualImmediate;
@@ -298,6 +307,55 @@ class AILegendary extends AIBase {
                             if (afterEmpty) return { x: afterX, y: afterY };
                         }
                     }
+                }
+            }
+        }
+        return null;
+    }
+
+    // Version directe: détecte n'importe quel open-three (trois alignés avec deux extrémités vides)
+    // et joue l'une des extrémités pour créer un open-four garantissant une victoire forcée au coup suivant.
+    extendAnyOpenThreeToFour(player, margin = 5) {
+        const b = this.getBoardBounds(margin);
+        if (!b) return null;
+        const dirs = this.getDirs();
+        for (let y = b.y0; y <= b.y1; y++) {
+            for (let x = b.x0; x <= b.x1; x++) {
+                if (this.board[y][x] !== player) continue;
+                for (const [dx, dy] of dirs) {
+                    // Cherche une chaîne exacte de longueur 3 en passant par (x,y)
+                    let left = 0, right = 0;
+                    for (let i = 1; i < this.WIN_LENGTH; i++) {
+                        const nx = x - i*dx, ny = y - i*dy;
+                        if (nx<0||ny<0||nx>=this.BOARD_SIZE||ny>=this.BOARD_SIZE) break;
+                        if (this.board[ny][nx] === player) left++; else break;
+                    }
+                    for (let i = 1; i < this.WIN_LENGTH; i++) {
+                        const nx = x + i*dx, ny = y + i*dy;
+                        if (nx<0||ny<0||nx>=this.BOARD_SIZE||ny>=this.BOARD_SIZE) break;
+                        if (this.board[ny][nx] === player) right++; else break;
+                    }
+                    const cnt = left + 1 + right;
+                    if (cnt !== 3) continue;
+                    const lx = x - left*dx, ly = y - left*dy;
+                    const rx = x + right*dx, ry = y + right*dy;
+                    const bx = lx - dx, by = ly - dy;
+                    const ax = rx + dx, ay = ry + dy;
+                    const bEmpty = bx>=0&&by>=0&&bx<this.BOARD_SIZE&&by<this.BOARD_SIZE && this.board[by][bx]===0;
+                    const aEmpty = ax>=0&&ay>=0&&ax<this.BOARD_SIZE&&ay<this.BOARD_SIZE && this.board[ay][ax]===0;
+                    if (!(bEmpty && aEmpty)) continue; // pas un open-three
+                    // Essayer de jouer l'une des extrémités qui produit effectivement un open four
+                    // Préférence: choisir celle qui garde les deux bouts ouverts (vrai open-four)
+                    const tryEnds = [ {x:bx,y:by}, {x:ax,y:ay} ];
+                    for (const end of tryEnds) {
+                        this.board[end.y][end.x] = player;
+                        const ok = this.isOpenFourAt(end.x, end.y, player);
+                        this.board[end.y][end.x] = 0;
+                        if (ok) return { x: end.x, y: end.y };
+                    }
+                    // Sinon, si aucune extrémité ne donne un open-four explicite, jouer quand même une extrémité pour faire 4 (semi-open)
+                    if (bEmpty) return { x: bx, y: by };
+                    if (aEmpty) return { x: ax, y: ay };
                 }
             }
         }
